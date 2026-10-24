@@ -5,29 +5,29 @@ on:
     branches: [main]
   workflow_dispatch:
 
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+permissions:
+  contents: read
 
-      - name: Set up JDK 17
+jobs:
+  debug-apk:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
-          java-version: '17'
-          distribution: 'temurin'
+          distribution: temurin
+          java-version: '21'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v4
-        with:
-          packages: 'platform-tools'
-
-      - name: Install Android platform 36 + build-tools
+      - name: Prepare Android SDK
         run: |
-          CMDLINE_TOOLS=$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager -type f | head -1)
-          echo "sdkmanager: $CMDLINE_TOOLS"
-          echo y | "$CMDLINE_TOOLS" --licenses >/dev/null 2>&1 || true
-          "$CMDLINE_TOOLS" "platforms;android-36" "build-tools;35.0.0"
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          test -x "$SDKM" || SDKM="$ANDROID_HOME/cmdline-tools/16.0/bin/sdkmanager"
+          "$SDKM" --list_installed 2>/dev/null | grep -E "platforms;android-37" || true
+          yes | "$SDKM" --licenses >/dev/null 2>&1 || true
 
       - name: Verify Python syntax
         run: |
@@ -38,15 +38,18 @@ jobs:
           python3 -m py_compile panel_server.py
           echo "Panel syntax OK"
 
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
       - name: Grant execute permission for gradlew
         working-directory: android
         run: chmod +x gradlew
 
-      - name: Build APK
+      - name: Build debug APK
         working-directory: android
-        run: ./gradlew assembleDebug --no-daemon --stacktrace
+        run: ./gradlew assembleDebug --no-daemon
 
-      - name: Upload APK
+      - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
           name: DeepseekQbot-debug-apk
