@@ -4,11 +4,15 @@ plugins {
     id 'org.jetbrains.kotlin.plugin.compose'
 }
 
+androidComponents {
+    onVariants { variant ->
+        variant.checkAarMetadata = false
+    }
+}
+
 android {
     namespace 'com.mouya.qbotds'
     compileSdk 36
-
-    checkAarMetadata = false
 
     defaultConfig {
         applicationId 'com.mouya.qbotds'
