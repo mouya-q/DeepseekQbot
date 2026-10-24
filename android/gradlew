@@ -1,6 +1,6 @@
 #!/usr/bin/env sh
 set -eu
-GRADLE_VERSION="9.8.2"
+GRADLE_VERSION="8.14"
 BASE_DIR="${GRADLE_USER_HOME:-$HOME/.gradle}/deepseekqbot-dists"
 DIST_DIR="$BASE_DIR/gradle-$GRADLE_VERSION"
 if [ ! -x "$DIST_DIR/bin/gradle" ]; then
