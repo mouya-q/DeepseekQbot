@@ -154,7 +154,7 @@ private fun QbotScreen() {
                             allowContentAccess = false
                             builtInZoomControls = false
                             displayZoomControls = false
-                            supportZoom = false
+                            setSupportZoom(false)
                             mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
                             javaScriptCanOpenWindowsAutomatically = false
                             setSupportMultipleWindows(false)
