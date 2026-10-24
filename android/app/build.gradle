@@ -5,7 +5,7 @@ plugins {
 }
 
 androidComponents {
-    onVariants { variant ->
+    beforeVariants { variant ->
         variant.checkAarMetadata = false
     }
 }
