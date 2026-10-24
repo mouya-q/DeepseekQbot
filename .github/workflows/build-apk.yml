@@ -11,10 +11,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up JDK 21
+      - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
-          java-version: '21'
+          java-version: '17'
           distribution: 'temurin'
 
       - name: Set up Android SDK
@@ -22,13 +22,12 @@ jobs:
         with:
           packages: 'platform-tools'
 
-      - name: Install Android platform 37 + build-tools
+      - name: Install Android platform 36 + build-tools
         run: |
           CMDLINE_TOOLS=$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager -type f | head -1)
           echo "sdkmanager: $CMDLINE_TOOLS"
           echo y | "$CMDLINE_TOOLS" --licenses >/dev/null 2>&1 || true
-          "$CMDLINE_TOOLS" --list 2>/dev/null | grep -E '^ *platforms;|build-tools;' | head -40
-          "$CMDLINE_TOOLS" "platforms;android-37" "build-tools;35.0.0"
+          "$CMDLINE_TOOLS" "platforms;android-36" "build-tools;35.0.0"
 
       - name: Verify Python syntax
         run: |
