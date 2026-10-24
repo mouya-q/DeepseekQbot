@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+bot/data/*
+bot/logs/*
+!bot/data/.keep
+!bot/logs/.keep
+local.properties
+*.apk
+*.aab
+.gradle/
+build/
