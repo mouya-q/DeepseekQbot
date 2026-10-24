@@ -1,0 +1,17 @@
+#!/usr/bin/env sh
+set -eu
+GRADLE_VERSION="8.14"
+BASE_DIR="${GRADLE_USER_HOME:-$HOME/.gradle}/deepseekqbot-dists"
+DIST_DIR="$BASE_DIR/gradle-$GRADLE_VERSION"
+if [ ! -x "$DIST_DIR/bin/gradle" ]; then
+  mkdir -p "$BASE_DIR"
+  ZIP="$BASE_DIR/gradle-$GRADLE_VERSION-bin.zip"
+  if ! command -v curl >/dev/null 2>&1 || ! command -v unzip >/dev/null 2>&1; then
+    echo "Gradle bootstrap requires curl and unzip, or install Gradle $GRADLE_VERSION manually." >&2
+    exit 1
+  fi
+  echo "Downloading Gradle $GRADLE_VERSION..."
+  curl -fL --retry 3 "https://services.gradle.org/distributions/gradle-$GRADLE_VERSION-bin.zip" -o "$ZIP"
+  unzip -q -o "$ZIP" -d "$BASE_DIR"
+fi
+exec "$DIST_DIR/bin/gradle" "$@"
