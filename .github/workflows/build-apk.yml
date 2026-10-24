@@ -20,7 +20,14 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
         with:
-          packages: 'platform-tools platforms;android-37 build-tools;35.0.0'
+          packages: 'platform-tools'
+
+      - name: Install Android platform 37 + build-tools
+        run: |
+          CMDLINE_TOOLS=$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager -type f | head -1)
+          echo "sdkmanager: $CMDLINE_TOOLS"
+          echo y | "$CMDLINE_TOOLS" --licenses >/dev/null 2>&1 || true
+          "$CMDLINE_TOOLS" "platforms;android-37" "build-tools;35.0.0"
 
       - name: Verify Python syntax
         run: |
