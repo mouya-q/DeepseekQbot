@@ -14,6 +14,7 @@ from collections import defaultdict
 
 from config import (
     ALLOWED_GROUPS,
+    ALT_NICKS,
     ANALYZE_EVERY_N_MESSAGES,
     ANALYSIS_MIN_MESSAGES,
     BOT_NICK,
@@ -23,6 +24,7 @@ from config import (
     REPLY_DELAY_BASE_MS,
     REPLY_DELAY_RANDOM_MS,
     REPLY_PROBABILITY_NON_MENTION,
+    in_quiet_hours,
     load_json,
     save_json,
     get_app_config,
@@ -348,11 +350,16 @@ class ReplyDecider:
         at_ids: list,
         bot_qq: int,
     ) -> tuple:
-        """Returns (should_reply: bool, reason: str)."""
+        """Returns (should_reply: bool, reason: str).
+
+        Settings are read from the live config on every call so edits made in
+        the app take effect immediately instead of at the next restart.
+        """
         now = time.time()
+        cfg = get_app_config()
 
         # 1. Not our group
-        allowed_groups = set(get_app_config().get("allowed_groups", ALLOWED_GROUPS))
+        allowed_groups = set(cfg.get("allowed_groups", ALLOWED_GROUPS))
         if group_id not in allowed_groups:
             return False, "不在允许的群"
 
@@ -360,24 +367,30 @@ class ReplyDecider:
         if user_id == bot_qq:
             return False, "自己的消息"
 
-        # 3. @ mention → must reply
+        # 3. @ mention → must reply (always, even during quiet hours)
         if has_at and str(bot_qq) in [str(a) for a in at_ids]:
             return True, "被@了"
 
-        # 4. Mention by nickname
-        nick_patterns = [get_app_config().get("bot_nick", BOT_NICK)] + [n for n in ["本鲸", "肥鱼", "鲸鱼娘"]]
+        # 4. Mention by nickname → must reply
+        nick_patterns = [cfg.get("bot_nick", BOT_NICK)] + list(ALT_NICKS)
         for n in nick_patterns:
-            if n in text:
+            if n and n in text:
                 return True, f"被提到名字({n})"
 
-        # 5. Cooldown
+        # 5. Quiet hours: only direct address gets through.
+        if in_quiet_hours(now):
+            return False, "安静时段"
+
+        # 6. Cooldown
         key = (group_id, user_id)
-        if key in self.last_reply and now - self.last_reply[key] < REPLY_COOLDOWN_S:
+        cooldown = cfg.get("reply_cooldown_s", REPLY_COOLDOWN_S)
+        if key in self.last_reply and now - self.last_reply[key] < cooldown:
             return False, "冷却中"
 
-        # 6. Random probability for non-mentioned messages
-        if random.random() < REPLY_PROBABILITY_NON_MENTION:
-            return True, f"随机({REPLY_PROBABILITY_NON_MENTION:.0%})"
+        # 7. Random probability for non-mentioned messages
+        probability = cfg.get("reply_probability", REPLY_PROBABILITY_NON_MENTION)
+        if random.random() < probability:
+            return True, f"随机({probability:.0%})"
 
         return False, "概率未命中"
 
