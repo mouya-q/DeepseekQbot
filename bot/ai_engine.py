@@ -226,12 +226,16 @@ class AIEngine:
         self.persona_text = self._load_persona()
 
     def _load_persona(self) -> str:
-        from config import PERSONA_FILE
+        """Load the persona card via config's multi-source loader.
 
-        if os.path.exists(PERSONA_FILE):
-            with open(PERSONA_FILE, "r", encoding="utf-8") as f:
-                return f.read()
-        return ""
+        Falls back to the compiled-in copy so Android builds always have it.
+        """
+        from config import load_persona_text
+
+        text = load_persona_text()
+        if not text:
+            print("[ai] warning: persona card is empty", flush=True)
+        return text
 
     def get_conversation(self, session_id: str, group_personality: str = "") -> Conversation:
         if session_id not in self.conversations:
