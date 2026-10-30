@@ -1,5 +1,12 @@
 # DeepseekQbot
 
+**应用名：** DeepseekQbot  
+**Android 包名：** `com.mouya.qbotds`  
+**版本：** 1.0.0  
+**运行方式：** Python 机器人与本地控制面板运行在 proot；Android App 通过 `127.0.0.1:3108` 连接。
+
+这是基于上传的“大肥鱼”QQ Bot 源码整理的应用化版本。人格卡 `bot/persona/大肥鱼.md` 与原始文件逐字节一致。Android 原工程不在上传 ZIP 中，因此没有旧 UI 可以直接复用；控制面板按你说的 iOS 风格新做，原人格与机器人流程尽量保留。
+
 ## 功能
 
 - 在「模型」页配置 API Base、Key、模型 ID、输出 Token 与 Temperature。
