@@ -143,6 +143,31 @@ object PythonRuntime {
         ""
     }
 
+    // ── Diagnostics ──────────────────────────────────────────────────────────
+
+    fun testAi(): JSONObject = callNoArg("test_ai_json")
+
+    fun testOneBot(): JSONObject = callNoArg("test_onebot_json")
+
+    fun stats(): JSONObject = callNoArg("stats_json")
+
+    fun clearLog(): JSONObject = callNoArg("clear_log")
+
+    fun personaPreview(length: Int = 400): String = try {
+        bridge()?.callAttr("persona_preview", length)?.toString() ?: ""
+    } catch (t: Throwable) {
+        Log.w(TAG, "persona_preview failed", t)
+        ""
+    }
+
+    private fun callNoArg(method: String): JSONObject = try {
+        val raw = bridge()?.callAttr(method)?.toString()
+        if (raw.isNullOrBlank()) JSONObject() else JSONObject(raw)
+    } catch (t: Throwable) {
+        Log.w(TAG, "$method failed", t)
+        JSONObject().put("ok", false).put("detail", t.message ?: "调用失败")
+    }
+
     private fun callJson(method: String): JSONObject = try {
         val raw = bridge()?.callAttr(method)?.toString()
         if (raw.isNullOrBlank()) JSONObject() else JSONObject(raw)
