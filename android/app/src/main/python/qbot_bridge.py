@@ -152,6 +152,165 @@ def safe_config_json():
         return json.dumps({"error": str(exc)}, ensure_ascii=False)
 
 
+# ── Diagnostics ──────────────────────────────────────────────────────────────
+
+def test_ai_json():
+    """Send a minimal chat request to the configured model.
+
+    Returns ``{"ok": bool, "detail": str}``. Never raises: the UI shows the
+    message verbatim.
+    """
+    _prepare_import_path()
+    try:
+        from config import get_app_config
+        import urllib.error
+        import urllib.request
+
+        cfg = get_app_config()
+        if not cfg.get("api_key"):
+            return json.dumps({"ok": False, "detail": "还没填 API Key"}, ensure_ascii=False)
+
+        base = cfg["api_base"].rstrip("/")
+        for suffix in ("/chat/completions", "/models"):
+            if base.endswith(suffix):
+                base = base[: -len(suffix)]
+
+        body = json.dumps({
+            "model": cfg["model"],
+            "messages": [{"role": "user", "content": "只回复两个字：在的"}],
+            "max_tokens": 24,
+            "temperature": 0,
+            "stream": False,
+        }).encode("utf-8")
+
+        req = urllib.request.Request(
+            base + "/chat/completions",
+            data=body,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": "Bearer " + cfg["api_key"],
+                "User-Agent": "DeepseekQbot/1.1",
+            },
+            method="POST",
+        )
+        timeout = cfg.get("ai_timeout_s", 60)
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                payload = json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")[:200]
+            return json.dumps({"ok": False, "detail": f"HTTP {exc.code}：{detail}"}, ensure_ascii=False)
+
+        choices = payload.get("choices") or []
+        if not choices:
+            return json.dumps({"ok": False, "detail": "接口有响应但没有 choices"}, ensure_ascii=False)
+        msg = (choices[0] or {}).get("message") or {}
+        reply = str(msg.get("content", ""))[:80]
+        model = payload.get("model", cfg["model"])
+        return json.dumps({"ok": True, "detail": f"{model} → {reply}"}, ensure_ascii=False)
+    except Exception as exc:  # noqa: BLE001
+        return json.dumps({"ok": False, "detail": str(exc)[:200]}, ensure_ascii=False)
+
+
+def test_onebot_json():
+    """Check whether the OneBot HTTP endpoint answers get_login_info."""
+    _prepare_import_path()
+    try:
+        from config import get_app_config
+        import urllib.request
+
+        cfg = get_app_config()
+        url = cfg["napcat_http_url"].rstrip("/") + "/get_login_info"
+        req = urllib.request.Request(url, headers={"User-Agent": "DeepseekQbot/1.1"})
+        try:
+            with urllib.request.urlopen(req, timeout=6) as resp:
+                payload = json.loads(resp.read().decode("utf-8"))
+        except Exception:
+            # Some OneBot servers only accept POST for API endpoints.
+            body = json.dumps({}).encode("utf-8")
+            req = urllib.request.Request(
+                url, data=body,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=6) as resp:
+                payload = json.loads(resp.read().decode("utf-8"))
+
+        if isinstance(payload, dict) and payload.get("status") == "ok":
+            data = payload.get("data") or {}
+            return json.dumps({
+                "ok": True,
+                "detail": "QQ{} {}".format(data.get("user_id"), data.get("nickname", "")),
+            }, ensure_ascii=False)
+        return json.dumps({"ok": False, "detail": "返回状态异常"}, ensure_ascii=False)
+    except Exception as exc:  # noqa: BLE001
+        return json.dumps({
+            "ok": False,
+            "detail": "连不上 OneBot：{}".format(str(exc)[:150]),
+        }, ensure_ascii=False)
+
+
+def persona_preview(length=400):
+    """First part of the effective persona card, for the settings screen."""
+    _prepare_import_path()
+    try:
+        from config import load_persona_text
+
+        text = load_persona_text()
+        return text[:length]
+    except Exception as exc:  # noqa: BLE001
+        return "读取失败：{}".format(exc)
+
+
+def stats_json():
+    """Lightweight usage counters read from the bot's log/state files."""
+    _prepare_import_path()
+    try:
+        from config import STATE_FILE, LOG_FILE, CHAT_LOG_DIR
+        import datetime
+
+        state = {}
+        try:
+            with open(STATE_FILE, "r", encoding="utf-8") as fh:
+                state = json.load(fh)
+        except Exception:
+            state = {}
+
+        log_size = os.path.getsize(LOG_FILE) if os.path.exists(LOG_FILE) else 0
+
+        today = datetime.date.today().strftime("%Y-%m-%d")
+        today_count = 0
+        chat_file = os.path.join(CHAT_LOG_DIR, f"chat_{today}.json")
+        try:
+            with open(chat_file, "r", encoding="utf-8") as fh:
+                today_count = len(json.load(fh))
+        except Exception:
+            today_count = 0
+
+        return json.dumps({
+            "today_messages": today_count,
+            "log_bytes": log_size,
+            "last_message_ts": state.get("last_message_ts", 0),
+            "stall_count": state.get("stall_count", 0),
+        }, ensure_ascii=False)
+    except Exception as exc:  # noqa: BLE001
+        return json.dumps({"error": str(exc)}, ensure_ascii=False)
+
+
+def clear_log():
+    """Truncate bot.log and bootstrap.log. Returns a status string."""
+    cleared = []
+    for name in ("bot.log", "bootstrap.log"):
+        path = os.path.join(_WORK_BOT_DIR, "logs", name)
+        try:
+            if os.path.exists(path):
+                open(path, "w", encoding="utf-8").close()
+                cleared.append(name)
+        except OSError as exc:
+            _log("clear_log failed for {}: {}".format(name, exc))
+    return json.dumps({"ok": True, "cleared": cleared}, ensure_ascii=False)
+
+
 # ── Bot lifecycle ────────────────────────────────────────────────────────────
 
 def is_running():
