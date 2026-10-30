@@ -26,10 +26,12 @@ from config import (
     BOT_NICK,
     LOG_FILE,
     MAX_REPLY_SPLIT,
+    PROACTIVE_MIN_INTERVAL_S,
     REPLY_DELAY_BASE_MS,
     REPLY_DELAY_RANDOM_MS,
     REPLY_PROBABILITY_NON_MENTION,
     STATE_FILE,
+    in_quiet_hours,
     load_json,
     save_json,
     get_app_config,
@@ -95,15 +97,9 @@ class DayuBot:
             os.path.dirname(os.path.abspath(__file__)), "state", "morning-report.json"
         )
 
-        # Sticker keyword → file path mapping (placeholder, fill in real paths)
-        self.sticker_map = {
-            "得意": None,
-            "委屈": None,
-            "装死": None,
-            "碗": None,
-            "吃瓜": None,
-            "白饭": None,
-        }
+        # Sticker keywords are resolved from the app config at send time so the
+        # user can point them at real files without rebuilding.
+        self.sticker_map = {}
 
     # ── WS callbacks ──
 
@@ -268,55 +264,103 @@ class DayuBot:
 
     # ── Sending ──
 
+    async def _typing_delay(self):
+        """Sleep a human-like interval before sending, unless disabled."""
+        cfg = get_app_config()
+        if not cfg.get("feature_typing_delay", True):
+            return
+        base = cfg.get("reply_delay_base_ms", REPLY_DELAY_BASE_MS)
+        spread = cfg.get("reply_delay_random_ms", REPLY_DELAY_RANDOM_MS)
+        await asyncio.sleep((base + random.randint(0, max(0, spread))) / 1000.0)
+
+    def _resolve_stickers(self):
+        """Return {keyword: image_path} for keywords the user configured."""
+        raw = get_app_config().get("sticker_keywords") or {}
+        return {k: v for k, v in raw.items() if isinstance(v, str) and v}
+
+    async def _send_sticker(self, target: int, keyword: str, is_group: bool) -> bool:
+        """Send a sticker image. Returns True when something was dispatched."""
+        path = self._resolve_stickers().get(keyword)
+        if not path:
+            log(f"  (表情包「{keyword}」未配置路径，跳过)")
+            return False
+
+        if not os.path.exists(path):
+            log(f"  ⚠️ 表情包文件不存在: {path}")
+            return False
+
+        segment = [{"type": "image", "data": {"file": f"file://{path}"}}]
+        if is_group:
+            result = send_group_message(target, segment)
+        else:
+            result = send_private_message(target, segment)
+
+        ok = isinstance(result, dict) and result.get("status") == "ok"
+        log(f"  → 表情包「{keyword}」{'已发送' if ok else '发送失败'}")
+        return ok
+
     async def send_group_or_private(self, target: int, text: str, is_group: bool = True):
         """Send a single message chunk with typing delay."""
-        delay = REPLY_DELAY_BASE_MS + random.randint(0, REPLY_DELAY_RANDOM_MS)
-        await asyncio.sleep(delay / 1000.0)
+        await self._typing_delay()
         log(f"  → 发送: {text[:60]}")
         if is_group:
             send_group_message(target, text)
         else:
             send_private_message(target, text)
 
-    async def send_group_reply(self, group_id: int, raw_reply: str):
-        """Send a group reply, split into multiple messages with delays."""
-        stickers = extract_sticker_keywords(raw_reply)
+    def _build_parts(self, raw_reply: str):
+        """Split a raw AI reply into (text_parts, sticker_keywords).
+
+        Honours the user's max length and the split-reply feature switch.
+        """
+        cfg = get_app_config()
+        limit = cfg.get("max_reply_split", MAX_REPLY_SPLIT)
+        stickers = extract_sticker_keywords(raw_reply) if cfg.get("feature_sticker", True) else []
         text_only = clean_sticker_markers(raw_reply)
 
+        if not cfg.get("feature_split_reply", True):
+            return [text_only], stickers
+
         parts = extract_split_markers(text_only) or [text_only]
+        return parts, stickers
+
+    async def send_group_reply(self, group_id: int, raw_reply: str):
+        """Send a group reply, split into multiple messages with delays."""
+        cfg = get_app_config()
+        limit = cfg.get("max_reply_split", MAX_REPLY_SPLIT)
+        parts, stickers = self._build_parts(raw_reply)
 
         for i, part in enumerate(parts):
-            chunks = split_into_chunks(part, MAX_REPLY_SPLIT)
-            for j, chunk in enumerate(chunks):
+            for j, chunk in enumerate(split_into_chunks(part, limit)):
                 if not chunk.strip():
                     continue
                 if i > 0 or j > 0:
-                    await asyncio.sleep(
-                        (REPLY_DELAY_BASE_MS + random.randint(0, REPLY_DELAY_RANDOM_MS)) / 1000.0
-                    )
+                    await self._typing_delay()
                 log(f"  → 发送: {chunk[:60]}")
                 send_group_message(group_id, chunk)
 
-            if i < len(stickers) and self.sticker_map.get(stickers[i]):
+            if cfg.get("feature_sticker", True) and i < len(stickers):
                 await asyncio.sleep(0.5)
-                # TODO: send image via send_group_msg with image segment
+                await self._send_sticker(group_id, stickers[i], is_group=True)
 
     async def send_private_reply(self, user_id: int, raw_reply: str):
-        """Send a private reply."""
-        text_only = clean_sticker_markers(raw_reply)
-        parts = extract_split_markers(text_only) or [text_only]
+        """Send a private reply, honouring the same split/sticker settings."""
+        cfg = get_app_config()
+        limit = cfg.get("max_reply_split", MAX_REPLY_SPLIT)
+        parts, stickers = self._build_parts(raw_reply)
 
         for i, part in enumerate(parts):
-            chunks = split_into_chunks(part, MAX_REPLY_SPLIT)
-            for j, chunk in enumerate(chunks):
+            for j, chunk in enumerate(split_into_chunks(part, limit)):
                 if not chunk.strip():
                     continue
                 if i > 0 or j > 0:
-                    await asyncio.sleep(
-                        (REPLY_DELAY_BASE_MS + random.randint(0, REPLY_DELAY_RANDOM_MS)) / 1000.0
-                    )
+                    await self._typing_delay()
                 log(f"  → 私聊发送: {chunk[:60]}")
                 send_private_message(user_id, chunk)
+
+            if cfg.get("feature_sticker", True) and i < len(stickers):
+                await asyncio.sleep(0.5)
+                await self._send_sticker(user_id, stickers[i], is_group=False)
 
     # ── Spontaneous messages (the "10% non-@ reply" + proactive) ──
 
@@ -324,8 +368,6 @@ class DayuBot:
         """Background task: periodically check if we should say something unprompted."""
         while self.running:
             try:
-                await asyncio.sleep(15)
-
                 # 1. Flush dsha outbox
                 self._flush_outbox()
 
@@ -350,23 +392,33 @@ class DayuBot:
 
                 # 3. Proactive message in groups (low probability, like a real person)
                 now = time.time()
-                if now - self.last_spontaneous > 120:  # at most once per 2 minutes
-                    if random.random() < REPLY_PROBABILITY_NON_MENTION * 0.3:  # lower for proactive
+                cfg = get_app_config()
+                # Note: no `continue` here — the outer loop's sleep must still run.
+                proactive_allowed = (
+                    cfg.get("feature_proactive", True)
+                    and not in_quiet_hours(now)
+                )
+                min_interval = cfg.get("proactive_min_interval_s", PROACTIVE_MIN_INTERVAL_S)
+                if proactive_allowed and now - self.last_spontaneous > min_interval:
+                    probability = cfg.get("reply_probability", REPLY_PROBABILITY_NON_MENTION) * 0.3
+                    if random.random() < probability:  # lower for proactive
                         self.last_spontaneous = now
                         proactives = [
                             "…(尾巴晃了晃) 有人吗",
-                            "本鲸饿了，谁请吃白饭 🐟",
+                            "本鲸饿了，谁请吃白饭",
                             "凌晨电费半价…有人一起熬夜吗",
                             "摸鱼中，别打扰",
                             "(打了个哈欠) 好困啊",
                         ]
                         msg = random.choice(proactives)
-                        for gid in get_app_config().get("allowed_groups", ALLOWED_GROUPS):
+                        for gid in cfg.get("allowed_groups", ALLOWED_GROUPS):
                             log(f"💬 主动冒泡: {msg}")
                             await self.send_group_or_private(gid, msg, is_group=True)
                             break  # one group per spontaneous
             except Exception as e:
                 log(f"⚠️ spontaneous 任务出错: {e}")
+
+            await asyncio.sleep(15)
 
     async def run(self):
         """Connect to NapCat's OneBot WS endpoint and serve until stopped.
