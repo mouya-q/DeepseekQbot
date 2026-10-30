@@ -73,14 +73,16 @@ object PythonRuntime {
 
                 // The bridge module reads ANDROID_APP_FILES at import time to
                 // decide where the writable bot copy lives, so it must be set
-                // before the import below.
-                val environ = python.getModule("os").getAttr("environ")
+                // before the import below. PyObject exposes dict-style access
+                // through callAttr, not getAttr.
+                val environ = python.getModule("os").callAttr("__dict__")
+                    .callAttr("__getitem__", "environ")
                 environ.callAttr("__setitem__", "ANDROID_APP_FILES", context.filesDir.absolutePath)
 
                 module = python.getModule("qbot_bridge")
                 startFailure = null
                 prefs.edit().putBoolean(KEY_CRASHED, false).apply()
-                Log.i(TAG, "python runtime ready: ${Python.getInstance().version}")
+                Log.i(TAG, "python runtime ready")
                 true
             } catch (t: Throwable) {
                 val detail = FailureDetail(
