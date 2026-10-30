@@ -368,6 +368,30 @@ class DayuBot:
             except Exception as e:
                 log(f"⚠️ spontaneous 任务出错: {e}")
 
+    async def run(self):
+        """Connect to NapCat's OneBot WS endpoint and serve until stopped.
+
+        Exposed as a method (rather than a local closure inside ``main``) so the
+        Android app can drive the same lifecycle without the CLI wrapper.
+        """
+        self.running = True
+        self.ws_client = WebSocketClient(
+            url=get_app_config()["napcat_ws_url"],
+            on_message=self.on_ws_message,
+            on_open=self.on_ws_open,
+            on_close=self.on_ws_close,
+        )
+
+        spontaneous = asyncio.create_task(self.spontaneous_task())
+        try:
+            await self.ws_client.run_forever()
+        finally:
+            spontaneous.cancel()
+            try:
+                await spontaneous
+            except asyncio.CancelledError:
+                pass
+
     def stop(self):
         self.running = False
         if self.ws_client:
@@ -393,34 +417,28 @@ def main():
         log("🐟 收到退出信号，正在保存…")
         bot.stop()
 
-    async def run():
-        bot.ws_client = WebSocketClient(
-            url=get_app_config()["napcat_ws_url"],
-            on_message=bot.on_ws_message,
-            on_open=bot.on_ws_open,
-            on_close=bot.on_ws_close,
-        )
-
-        # Start spontaneous task alongside the WS loop
-        spontaneous = asyncio.create_task(bot.spontaneous_task())
-
-        try:
-            await bot.ws_client.run_forever()
-        finally:
-            spontaneous.cancel()
-
-    loop = asyncio.get_event_loop()
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     for signame in ("SIGINT", "SIGTERM"):
         sig = getattr(signal, signame, None)
         if sig:
-            loop.add_signal_handler(sig, lambda: asyncio.create_task(shutdown()))
+            try:
+                loop.add_signal_handler(sig, lambda: asyncio.ensure_future(shutdown()))
+            except (NotImplementedError, RuntimeError):
+                # Signal handlers are unavailable on some platforms; the
+                # Android app drives shutdown through a stop event instead.
+                pass
 
     try:
-        loop.run_until_complete(run())
+        loop.run_until_complete(bot.run())
     except KeyboardInterrupt:
         log("🐟 手动中断，退出")
     finally:
         bot.stop()
+        try:
+            loop.run_until_complete(loop.shutdown_asyncgens())
+        except Exception:
+            pass
         loop.close()
 
 
