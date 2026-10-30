@@ -9,6 +9,8 @@ dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
         google()
+        // Chaquopy plugin, runtime, target and stdlib modules are all
+        // published to Maven Central, so no extra repository is required.
         mavenCentral()
     }
 }
