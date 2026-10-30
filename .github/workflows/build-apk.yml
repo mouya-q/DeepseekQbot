@@ -21,22 +21,58 @@ jobs:
           distribution: temurin
           java-version: '21'
 
+      # Chaquopy needs a host CPython matching the app's Python version to
+      # byte-compile sources. The bot declares no pip requirements, so no
+      # packages have to be installed here.
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
       - name: Prepare Android SDK
         run: |
           echo "ANDROID_HOME=$ANDROID_HOME"
           SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           test -x "$SDKM" || SDKM="$ANDROID_HOME/cmdline-tools/16.0/bin/sdkmanager"
-          "$SDKM" --list_installed 2>/dev/null | grep -E "platforms;android-37" || true
           yes | "$SDKM" --licenses >/dev/null 2>&1 || true
 
       - name: Verify Python syntax
         run: |
           cd bot
           python3 -m py_compile config.py ai_engine.py ws_client.py onebot.py main.py supervisor.py dsha-responder.py dsha-watcher.py morning-report.py
-          echo "Python syntax OK"
+          echo "Bot syntax OK"
           cd ../
           python3 -m py_compile panel_server.py
           echo "Panel syntax OK"
+          python3 -m py_compile android/app/src/main/python/qbot_bridge.py
+          echo "Bridge syntax OK"
+          python3 -m py_compile android/app/src/main/python/bot/persona_builtin.py
+          echo "Persona module OK"
+
+      - name: Sync bot sources into the Android python tree
+        run: |
+          # Keep the packaged copy identical to the canonical bot sources,
+          # while preserving persona_builtin.py (generated from the persona card).
+          mkdir -p android/app/src/main/python/bot
+          cp android/app/src/main/python/bot/persona_builtin.py /tmp/persona_builtin.py
+          cp bot/*.py android/app/src/main/python/bot/
+          cp /tmp/persona_builtin.py android/app/src/main/python/bot/persona_builtin.py
+
+          # Regenerate the persona module from the markdown so they cannot drift.
+          python3 - <<'PY'
+          import json
+          src = 'bot/persona/大肥鱼.md'
+          out = 'android/app/src/main/python/bot/persona_builtin.py'
+          text = open(src, encoding='utf-8').read()
+          with open(out, 'w', encoding='utf-8') as f:
+              f.write('"""Built-in persona card for 大肥鱼.\n\n')
+              f.write("Packaged as a Python module so it survives Chaquopy's .py-only\n")
+              f.write('source collection. Mirrors bot/persona/大肥鱼.md.\n"""\n\n')
+              f.write('PERSONA_TEXT = ' + json.dumps(text, ensure_ascii=False) + '\n')
+          print('regenerated', out)
+          PY
+
+          ls -la android/app/src/main/python/bot | head -20
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -47,7 +83,9 @@ jobs:
 
       - name: Build debug APK
         working-directory: android
-        run: ./gradlew assembleDebug --no-daemon
+        env:
+          CHAQUOPY_BUILD_PYTHON: python3
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
