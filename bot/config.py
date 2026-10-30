@@ -62,6 +62,33 @@ DEFAULT_APP_CONFIG = {
 }
 
 
+def load_persona_text():
+    """Load the persona card.
+
+    Order of preference:
+    1. ``bot/data/persona_override.md`` — user-edited copy in writable storage.
+    2. ``bot/persona/大肥鱼.md`` — checked-in card next to the sources.
+    3. ``persona_builtin.PERSONA_TEXT`` — compiled into the APK so Android
+       builds never lose the card when non-.py assets are not packaged.
+    """
+    override = os.path.join(DATA_DIR, "persona_override.md")
+    for path in (override, PERSONA_FILE):
+        try:
+            if os.path.isfile(path):
+                with open(path, "r", encoding="utf-8") as fh:
+                    text = fh.read().strip()
+                if text:
+                    return text
+        except OSError:
+            continue
+    try:
+        from persona_builtin import PERSONA_TEXT
+
+        return PERSONA_TEXT
+    except Exception:
+        return ""
+
+
 def load_json(path, default=None):
     if os.path.exists(path):
         try:
