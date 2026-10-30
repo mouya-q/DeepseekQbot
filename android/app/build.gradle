@@ -40,9 +40,11 @@ android {
 chaquopy {
     defaultConfig {
         // Pure standard library bot: no pip requirements, so CI needs no host
-        // Python packages. buildPython only locates the interpreter itself.
+        // Python packages. buildPython only locates the interpreter itself and
+        // must be a List of command tokens in Chaquopy 17.
         version = '3.12'
-        buildPython = System.getenv('CHAQUOPY_BUILD_PYTHON') ?: 'python3'
+        def buildPythonBin = System.getenv('CHAQUOPY_BUILD_PYTHON') ?: 'python3'
+        buildPython(buildPythonBin)
     }
 }
 
