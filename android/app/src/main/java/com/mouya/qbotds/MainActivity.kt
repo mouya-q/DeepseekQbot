@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -55,6 +56,7 @@ import top.yukonga.miuix.kmp.basic.NavigationBar
 import top.yukonga.miuix.kmp.basic.NavigationBarItem
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.SmallTopAppBar
+import top.yukonga.miuix.kmp.basic.Switch
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.Contacts
@@ -114,6 +116,10 @@ class MainActivity : ComponentActivity() {
                     onReloadRuntime = { reloadRuntime() },
                     onOpenBattery = { openBatterySettings() },
                     onSaveConfig = { payload -> saveConfig(payload) },
+                    onTestAi = { runTest("ai") },
+                    onTestOneBot = { runTest("onebot") },
+                    onClearLog = { clearLog() },
+                    onPreviewPersona = { loadPersona() },
                 )
             }
         }
@@ -169,6 +175,42 @@ class MainActivity : ComponentActivity() {
         }.start()
     }
 
+    private fun runTest(kind: String) {
+        botState = botState.copy(testRunning = true, testResult = "")
+        Thread {
+            if (!PythonRuntime.ensureStarted(applicationContext)) {
+                runOnUiThread {
+                    botState = botState.copy(testRunning = false, testResult = "运行时未就绪")
+                }
+                return@Thread
+            }
+            val result = if (kind == "ai") PythonRuntime.testAi() else PythonRuntime.testOneBot()
+            val detail = result.optString("detail")
+            val ok = result.optBoolean("ok")
+            runOnUiThread {
+                botState = botState.copy(
+                    testRunning = false,
+                    testResult = (if (ok) "✓ " else "✗ ") + detail,
+                )
+            }
+        }.start()
+    }
+
+    private fun clearLog() {
+        Thread {
+            if (PythonRuntime.isReady) PythonRuntime.clearLog()
+            runOnUiThread { botState = botState.copy(log = "日志已清空") }
+            refreshState()
+        }.start()
+    }
+
+    private fun loadPersona() {
+        Thread {
+            val text = if (PythonRuntime.isReady) PythonRuntime.personaPreview(600) else ""
+            runOnUiThread { botState = botState.copy(personaText = text) }
+        }.start()
+    }
+
     private fun refreshState() {
         Thread {
             val ready = PythonRuntime.isReady
@@ -176,6 +218,7 @@ class MainActivity : ComponentActivity() {
             val error = PythonRuntime.startupError
             val logTail = if (ready) PythonRuntime.tailLog(60) else PythonRuntime.startupTrace.orEmpty()
             val config = if (ready) PythonRuntime.safeConfigJson() else null
+            val stats = if (ready) PythonRuntime.stats() else null
 
             runOnUiThread {
                 botState = botState.copy(
@@ -193,6 +236,21 @@ class MainActivity : ComponentActivity() {
                     botQq = config?.optString("bot_qq").orEmpty(),
                     botNick = config?.optString("bot_nick").orEmpty(),
                     groups = config?.optString("allowed_groups").orEmpty(),
+                    temperature = config?.optString("temperature").orEmpty(),
+                    maxTokens = config?.optString("max_tokens").orEmpty(),
+                    replyProbability = config?.optString("reply_probability").orEmpty(),
+                    replyCooldown = config?.optString("reply_cooldown_s").orEmpty(),
+                    maxSplit = config?.optString("max_reply_split").orEmpty(),
+                    quietStart = config?.optString("quiet_hours_start").orEmpty(),
+                    quietEnd = config?.optString("quiet_hours_end").orEmpty(),
+                    extraPersona = config?.optString("extra_persona").orEmpty(),
+                    flagProactive = config?.optBoolean("feature_proactive", true) ?: true,
+                    flagSplit = config?.optBoolean("feature_split_reply", true) ?: true,
+                    flagTyping = config?.optBoolean("feature_typing_delay", true) ?: true,
+                    flagSticker = config?.optBoolean("feature_sticker", true) ?: true,
+                    flagQuiet = config?.optBoolean("feature_quiet_hours", true) ?: true,
+                    todayMessages = stats?.optInt("today_messages", 0) ?: 0,
+                    logBytes = stats?.optLong("log_bytes", 0L) ?: 0L,
                 )
             }
         }.start()
@@ -237,6 +295,9 @@ data class BotUiState(
     val runtimeError: String? = null,
     val log: String = "",
     val message: String = "",
+    val testRunning: Boolean = false,
+    val testResult: String = "",
+    val personaText: String = "",
     val model: String = "",
     val apiBase: String = "",
     val napcatWs: String = "",
@@ -246,6 +307,21 @@ data class BotUiState(
     val botQq: String = "",
     val botNick: String = "",
     val groups: String = "",
+    val temperature: String = "",
+    val maxTokens: String = "",
+    val replyProbability: String = "",
+    val replyCooldown: String = "",
+    val maxSplit: String = "",
+    val quietStart: String = "",
+    val quietEnd: String = "",
+    val extraPersona: String = "",
+    val flagProactive: Boolean = true,
+    val flagSplit: Boolean = true,
+    val flagTyping: Boolean = true,
+    val flagSticker: Boolean = true,
+    val flagQuiet: Boolean = true,
+    val todayMessages: Int = 0,
+    val logBytes: Long = 0L,
 )
 
 @Composable
@@ -257,6 +333,10 @@ private fun AppScaffold(
     onReloadRuntime: () -> Unit,
     onOpenBattery: () -> Unit,
     onSaveConfig: (JSONObject) -> Unit,
+    onTestAi: () -> Unit,
+    onTestOneBot: () -> Unit,
+    onClearLog: () -> Unit,
+    onPreviewPersona: () -> Unit,
 ) {
     var page by remember { mutableStateOf(Page.HOME) }
 
@@ -310,9 +390,15 @@ private fun AppScaffold(
                 .background(Color(0xFFF4F6FB)),
         ) {
             when (page) {
-                Page.HOME -> HomePage(state, onStart, onStop, onRefresh, onReloadRuntime)
-                Page.BOT -> BotPage(state, onStart, onStop, onRefresh, onOpenBattery)
-                Page.CONFIG -> ConfigPage(state, onSaveConfig)
+                Page.HOME -> HomePage(
+                    state, onStart, onStop, onRefresh, onReloadRuntime, onClearLog,
+                )
+                Page.BOT -> BotPage(
+                    state, onStart, onStop, onRefresh, onOpenBattery, onTestOneBot,
+                )
+                Page.CONFIG -> ConfigPage(
+                    state, onSaveConfig, onTestAi, onPreviewPersona,
+                )
                 Page.ABOUT -> AboutPage()
             }
         }
@@ -326,6 +412,7 @@ private fun HomePage(
     onStop: () -> Unit,
     onRefresh: () -> Unit,
     onReloadRuntime: () -> Unit,
+    onClearLog: () -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -347,6 +434,7 @@ private fun HomePage(
             StatusRow("机器人进程", if (state.running) "运行中" else "已停止", state.running)
             StatusRow("模型", state.model.ifBlank { "未配置" }, state.model.isNotBlank())
             StatusRow("API Key", if (state.apiKeySet) "已保存" else "未填写", state.apiKeySet)
+            StatusRow("今日消息", state.todayMessages.toString(), state.todayMessages > 0)
 
             state.runtimeError?.let { err ->
                 Spacer(Modifier.height(10.dp))
@@ -358,9 +446,9 @@ private fun HomePage(
             }
 
             Spacer(Modifier.height(14.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = if (state.running) onStop else onStart) {
-                    Text(if (state.running) "停止机器人" else "启动机器人", color = Color.White)
+                    Text(if (state.running) "停止" else "启动", color = Color.White)
                 }
                 Button(onClick = onRefresh) { Text("刷新") }
                 Button(onClick = onReloadRuntime) { Text("重载") }
@@ -368,7 +456,14 @@ private fun HomePage(
         }
 
         CardBox {
-            Text("运行日志", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("运行日志", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Button(onClick = onClearLog) { Text("清空", fontSize = 11.sp) }
+            }
             Spacer(Modifier.height(8.dp))
             Text(
                 text = state.log.ifBlank { "暂无日志。" },
@@ -386,6 +481,7 @@ private fun BotPage(
     onStop: () -> Unit,
     onRefresh: () -> Unit,
     onOpenBattery: () -> Unit,
+    onTestOneBot: () -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -407,6 +503,18 @@ private fun BotPage(
             StatusRow("OneBot HTTP", state.napcatHttp.ifBlank { "未配置" }, state.napcatHttp.isNotBlank())
             StatusRow("机器人 QQ", state.botQq.ifBlank { "未设置" }, state.botQq.isNotBlank())
             StatusRow("主人 QQ", state.ownerQq.ifBlank { "未设置" }, state.ownerQq.isNotBlank())
+
+            Spacer(Modifier.height(12.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = onTestOneBot) {
+                    Text(if (state.testRunning) "测试中…" else "测试连接")
+                }
+                Button(onClick = onRefresh) { Text("刷新") }
+            }
+            if (state.testResult.isNotBlank()) {
+                Spacer(Modifier.height(10.dp))
+                Text(state.testResult, color = Color(0xFF5B6779), fontSize = 11.sp)
+            }
         }
 
         CardBox {
@@ -418,10 +526,7 @@ private fun BotPage(
                 fontSize = 12.sp,
             )
             Spacer(Modifier.height(12.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Button(onClick = onOpenBattery) { Text("电池设置") }
-                Button(onClick = onRefresh) { Text("刷新") }
-            }
+            Button(onClick = onOpenBattery) { Text("电池设置") }
         }
 
         CardBox {
@@ -435,16 +540,68 @@ private fun BotPage(
 }
 
 @Composable
-private fun ConfigPage(state: BotUiState, onSaveConfig: (JSONObject) -> Unit) {
+private fun ConfigPage(
+    state: BotUiState,
+    onSaveConfig: (JSONObject) -> Unit,
+    onTestAi: () -> Unit,
+    onPreviewPersona: () -> Unit,
+) {
     var apiBase by remember(state.apiBase) { mutableStateOf(state.apiBase) }
     var apiKey by remember { mutableStateOf("") }
     var model by remember(state.model) { mutableStateOf(state.model) }
+    var temperature by remember(state.temperature) { mutableStateOf(state.temperature) }
+    var maxTokens by remember(state.maxTokens) { mutableStateOf(state.maxTokens) }
+
     var wsUrl by remember(state.napcatWs) { mutableStateOf(state.napcatWs) }
     var httpUrl by remember(state.napcatHttp) { mutableStateOf(state.napcatHttp) }
     var botQq by remember(state.botQq) { mutableStateOf(state.botQq) }
     var ownerQq by remember(state.ownerQq) { mutableStateOf(state.ownerQq) }
     var botNick by remember(state.botNick) { mutableStateOf(state.botNick) }
     var groups by remember(state.groups) { mutableStateOf(state.groups) }
+
+    var replyProbability by remember(state.replyProbability) { mutableStateOf(state.replyProbability) }
+    var replyCooldown by remember(state.replyCooldown) { mutableStateOf(state.replyCooldown) }
+    var maxSplit by remember(state.maxSplit) { mutableStateOf(state.maxSplit) }
+    var quietStart by remember(state.quietStart) { mutableStateOf(state.quietStart) }
+    var quietEnd by remember(state.quietEnd) { mutableStateOf(state.quietEnd) }
+
+    var flagProactive by remember(state.flagProactive) { mutableStateOf(state.flagProactive) }
+    var flagSplit by remember(state.flagSplit) { mutableStateOf(state.flagSplit) }
+    var flagTyping by remember(state.flagTyping) { mutableStateOf(state.flagTyping) }
+    var flagSticker by remember(state.flagSticker) { mutableStateOf(state.flagSticker) }
+    var flagQuiet by remember(state.flagQuiet) { mutableStateOf(state.flagQuiet) }
+
+    var extraPersona by remember(state.extraPersona) { mutableStateOf(state.extraPersona) }
+
+    fun buildPayload(): JSONObject = JSONObject().apply {
+        put("api_base", apiBase)
+        put("model", model)
+        put("napcat_ws_url", wsUrl)
+        put("napcat_http_url", httpUrl)
+        if (temperature.isNotBlank()) put("temperature", temperature.toDoubleOrNull() ?: 0.85)
+        if (maxTokens.isNotBlank()) put("max_tokens", maxTokens.toIntOrNull() ?: 2048)
+        if (botQq.isNotBlank()) put("bot_qq", botQq)
+        if (ownerQq.isNotBlank()) put("owner_qq", ownerQq)
+        if (botNick.isNotBlank()) put("bot_nick", botNick)
+        if (groups.isNotBlank()) put("allowed_groups", groups)
+        if (apiKey.isNotBlank()) put("api_key", apiKey)
+
+        if (replyProbability.isNotBlank()) {
+            put("reply_probability", replyProbability.toDoubleOrNull() ?: 0.1)
+        }
+        if (replyCooldown.isNotBlank()) put("reply_cooldown_s", replyCooldown.toIntOrNull() ?: 3)
+        if (maxSplit.isNotBlank()) put("max_reply_split", maxSplit.toIntOrNull() ?: 300)
+        if (quietStart.isNotBlank()) put("quiet_hours_start", quietStart.toIntOrNull() ?: 2)
+        if (quietEnd.isNotBlank()) put("quiet_hours_end", quietEnd.toIntOrNull() ?: 7)
+
+        put("feature_proactive", flagProactive)
+        put("feature_split_reply", flagSplit)
+        put("feature_typing_delay", flagTyping)
+        put("feature_sticker", flagSticker)
+        put("feature_quiet_hours", flagQuiet)
+
+        put("extra_persona", extraPersona)
+    }
 
     Column(
         modifier = Modifier
@@ -456,49 +613,157 @@ private fun ConfigPage(state: BotUiState, onSaveConfig: (JSONObject) -> Unit) {
         CardBox {
             Text("模型接口", fontSize = 16.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(12.dp))
-
             Field("API Base", apiBase, { apiBase = it }, "https://api.example.com/v1")
-            Field("API Key", apiKey, { apiKey = it }, if (state.apiKeySet) "已保存，留空则不修改" else "粘贴密钥")
+            Field(
+                "API Key", apiKey, { apiKey = it },
+                if (state.apiKeySet) "已保存，留空则不修改" else "粘贴密钥",
+            )
             Field("模型 ID", model, { model = it }, "deepseek-chat")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Box(modifier = Modifier.weight(1f)) {
+                    Field("Temperature", temperature, { temperature = it }, "0.85", KeyboardType.Decimal)
+                }
+                Box(modifier = Modifier.weight(1f)) {
+                    Field("最大输出", maxTokens, { maxTokens = it }, "2048", KeyboardType.Number)
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = onTestAi) {
+                    Text(if (state.testRunning) "测试中…" else "测试接口")
+                }
+                Button(onClick = { onSaveConfig(buildPayload()) }) {
+                    Text("保存", color = Color.White)
+                }
+            }
+            if (state.testResult.isNotBlank()) {
+                Spacer(Modifier.height(10.dp))
+                Text(state.testResult, color = Color(0xFF5B6779), fontSize = 11.sp)
+            }
         }
 
         CardBox {
             Text("QQ 连接", fontSize = 16.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(12.dp))
-
             Field("OneBot WS 地址", wsUrl, { wsUrl = it }, "ws://127.0.0.1:3001")
             Field("OneBot HTTP 地址", httpUrl, { httpUrl = it }, "http://127.0.0.1:3000")
-            Field("机器人 QQ", botQq, { botQq = it }, "小号 QQ 号", KeyboardType.Number)
-            Field("主人 QQ", ownerQq, { ownerQq = it }, "你的大号 QQ 号", KeyboardType.Number)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Box(modifier = Modifier.weight(1f)) {
+                    Field("机器人 QQ", botQq, { botQq = it }, "小号", KeyboardType.Number)
+                }
+                Box(modifier = Modifier.weight(1f)) {
+                    Field("主人 QQ", ownerQq, { ownerQq = it }, "大号", KeyboardType.Number)
+                }
+            }
         }
 
         CardBox {
             Text("群与昵称", fontSize = 16.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(12.dp))
-
             Field("机器人昵称", botNick, { botNick = it }, "大肥鱼")
             Field("允许的群号", groups, { groups = it }, "多个群用逗号分隔")
+        }
 
-            Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Button(
-                    onClick = {
-                        val payload = JSONObject().apply {
-                            put("api_base", apiBase)
-                            put("model", model)
-                            put("napcat_ws_url", wsUrl)
-                            put("napcat_http_url", httpUrl)
-                            if (botQq.isNotBlank()) put("bot_qq", botQq)
-                            if (ownerQq.isNotBlank()) put("owner_qq", ownerQq)
-                            if (botNick.isNotBlank()) put("bot_nick", botNick)
-                            if (groups.isNotBlank()) put("allowed_groups", groups)
-                            if (apiKey.isNotBlank()) put("api_key", apiKey)
-                        }
-                        onSaveConfig(payload)
-                    },
-                ) { Text("保存配置", color = Color.White) }
+        CardBox {
+            Text("聊天行为", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = "保存后立即生效，无需重启机器人。",
+                color = Color(0xFF79869A),
+                fontSize = 11.sp,
+            )
+            Spacer(Modifier.height(12.dp))
+
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Box(modifier = Modifier.weight(1f)) {
+                    Field("回复概率(0-1)", replyProbability, { replyProbability = it }, "0.1", KeyboardType.Decimal)
+                }
+                Box(modifier = Modifier.weight(1f)) {
+                    Field("冷却(秒)", replyCooldown, { replyCooldown = it }, "3", KeyboardType.Number)
+                }
+            }
+            Field("单条最长字数", maxSplit, { maxSplit = it }, "300", KeyboardType.Number)
+
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Box(modifier = Modifier.weight(1f)) {
+                    Field("安静开始(时)", quietStart, { quietStart = it }, "2", KeyboardType.Number)
+                }
+                Box(modifier = Modifier.weight(1f)) {
+                    Field("安静结束(时)", quietEnd, { quietEnd = it }, "7", KeyboardType.Number)
+                }
             }
         }
+
+        CardBox {
+            Text("功能开关", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(8.dp))
+            ToggleRow("主动冒泡", "偶尔自己找话题说一句", flagProactive) { flagProactive = it }
+            ToggleRow("分段发送", "长回复拆成多条，像真人打字", flagSplit) { flagSplit = it }
+            ToggleRow("模拟打字延迟", "发送前随机停顿一下", flagTyping) { flagTyping = it }
+            ToggleRow("表情包", "按 [sticker: 关键词] 发图", flagSticker) { flagSticker = it }
+            ToggleRow("安静时段", "深夜只回 @ 和点名", flagQuiet) { flagQuiet = it }
+        }
+
+        CardBox {
+            Text("人格追加", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = "追加到内置人格卡末尾，用于临时调整语气或加梗。",
+                color = Color(0xFF79869A),
+                fontSize = 11.sp,
+            )
+            Spacer(Modifier.height(10.dp))
+            BasicTextField(
+                value = extraPersona,
+                onValueChange = { extraPersona = it },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(90.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Color(0xFFF7F9FD))
+                    .padding(12.dp),
+                textStyle = TextStyle(fontSize = 12.sp, color = Color(0xFF172238)),
+                cursorBrush = SolidColor(Color(0xFF3478F6)),
+                decorationBox = { inner ->
+                    if (extraPersona.isEmpty()) {
+                        Text("例如：最近少说「6」，多说「行吧」", fontSize = 12.sp, color = Color(0xFFB1BAC9))
+                    }
+                    inner()
+                },
+            )
+            Spacer(Modifier.height(10.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = { onSaveConfig(buildPayload()) }) {
+                    Text("保存全部设置", color = Color.White)
+                }
+                Button(onClick = onPreviewPersona) { Text("预览人格卡") }
+            }
+            if (state.personaText.isNotBlank()) {
+                Spacer(Modifier.height(10.dp))
+                Text(state.personaText, color = Color(0xFF5B6779), fontSize = 10.sp)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ToggleRow(
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    onChange: (Boolean) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 7.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, fontSize = 13.sp, fontWeight = FontWeight.Medium, color = Color(0xFF172238))
+            Text(subtitle, fontSize = 10.sp, color = Color(0xFF8A94A6))
+        }
+        Switch(checked = checked, onCheckedChange = onChange)
     }
 }
 
@@ -517,8 +782,6 @@ private fun Field(
     ) {
         Text(label, fontSize = 11.sp, color = Color(0xFF68758B), fontWeight = FontWeight.Medium)
         Spacer(Modifier.height(5.dp))
-        // BasicTextField is used instead of a styled widget so the layout stays
-        // predictable across Miuix/Compose version changes.
         BasicTextField(
             value = value,
             onValueChange = onChange,
@@ -555,7 +818,7 @@ private fun AboutPage() {
                 Image(
                     painter = painterResource(R.drawable.ic_deepseek),
                     contentDescription = "DeepSeek",
-                    modifier = Modifier.height(30.dp),
+                    modifier = Modifier.size(30.dp),
                 )
                 Text(
                     text = "  深度求索",
