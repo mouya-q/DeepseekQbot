@@ -67,6 +67,9 @@ import top.yukonga.miuix.kmp.theme.ThemeController
 
 private const val TAG = "MainActivity"
 
+/** Shown on the About page; keep in sync with versionName. */
+private const val APP_VERSION = "1.1.0"
+
 private enum class Page(val label: String) {
     HOME("总览"),
     BOT("QQ"),
@@ -582,7 +585,7 @@ private fun AboutPage() {
         CardBox {
             Text("版本", fontSize = 14.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(6.dp))
-            Text(BuildConfig.VERSION_NAME, color = Color(0xFF79869A), fontSize = 12.sp)
+            Text(APP_VERSION, color = Color(0xFF79869A), fontSize = 12.sp)
         }
     }
 }
